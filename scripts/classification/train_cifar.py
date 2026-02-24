@@ -144,3 +144,8 @@ print("Dataloaders initialized successfully.")
 
 # Start the training process.
 resnet.fit()
+
+# Save the trained model to disk.
+# The filename will include the ResNet depth and dataset variant for clarity
+# (e.g. `resnet-32_cifar10.pth` for ResNet-32 trained on CIFAR-10).
+resnet.save()

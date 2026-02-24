@@ -4,6 +4,8 @@
 
 # pylint: disable=too-many-instance-attributes, too-many-locals
 
+import json
+from pathlib import Path
 from functools import partial
 
 import torch
@@ -48,6 +50,26 @@ class TorchResNetEngine:
         self.val_mean = 0.0
         self.val_std = 0.0
         self.val_transforms: transforms.Compose = None
+
+    @staticmethod
+    def lr_lambda(current_step: int, learning_rate: list[float], milestones: list[int], enable_warmup: bool):
+        """
+        Learning rate schedule multiplier function.
+        Returns a multiplicative factor for the base learning rate.
+        """
+
+        if enable_warmup and current_step < 400:
+            # Warmup: return ratio of warmup_lr to base_lr
+            return learning_rate[0] / learning_rate[-1]
+        if current_step < milestones[0]:
+            # Normal rate: 1.0x
+            return 1.0
+        if current_step < milestones[1]:
+            # First decay: 0.1x
+            return 0.1
+
+        # Second decay: 0.01x
+        return 0.01
 
     def _setup_device(self):
         """
@@ -149,26 +171,6 @@ class TorchResNetEngine:
                 transforms.Normalize(self.val_mean, self.val_std),
             ]
         )
-
-    @staticmethod
-    def lr_lambda(current_step: int, learning_rate: list[float], milestones: list[int], enable_warmup: bool):
-        """
-        Learning rate schedule multiplier function.
-        Returns a multiplicative factor for the base learning rate.
-        """
-
-        if enable_warmup and current_step < 400:
-            # Warmup: return ratio of warmup_lr to base_lr
-            return learning_rate[0] / learning_rate[-1]
-        if current_step < milestones[0]:
-            # Normal rate: 1.0x
-            return 1.0
-        if current_step < milestones[1]:
-            # First decay: 0.1x
-            return 0.1
-
-        # Second decay: 0.01x
-        return 0.01
 
     def _prepare_dataset(self, load_test: bool = False):
         """
@@ -368,9 +370,69 @@ class TorchResNetEngine:
                 val_acc, val_loss = self.evaluate(self.val_dataloader, criterion)
                 print(
                     f"Epoch {epoch+1} - accuracy: {batch_acc:.4f} - loss: {avg_loss:.4f}",
-                    f"- val_accuracy: {val_acc:.4f} - val_loss: {val_loss:.4f}"
+                    f"- val_accuracy: {val_acc:.4f} - val_loss: {val_loss:.4f}",
                 )
             else:
                 print(f"Epoch {epoch+1} - accuracy: {batch_acc:.4f} - loss: {avg_loss:.4f}")
 
         print("\nTraining completed!")
+
+    def load(self, model_path: str):
+        """
+        Load a trained model from disk.
+
+        Reads the ModelConfig JSON and weights .pth that were written by `save()`.
+        The files are located by the same 6n+2 naming convention used during saving.
+        """
+
+        # Load ModelConfig from JSON.
+        config_path = f"{model_path}.json"
+        raw = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        model_config = ModelConfig(
+            device=self.device,
+            initial_out_planes=raw["initial_out_planes"],
+            kernel_size=raw["kernel_size"],
+            num_classes=raw["num_classes"],
+            padding=raw["padding"],
+            residual_block_depth=raw["residual_block_depth"],
+            stride=raw["stride"],
+        )
+
+        # Reconstruct model and load weights.
+        self.model: TorchResNet = TorchResNet(model_config).to(self.device)
+        weights_path = f"{model_path}.pth"
+        self.model.load_state_dict(torch.load(weights_path, map_location=self.device))
+        self.model.eval()
+        print(f"Model loaded from {weights_path}")
+
+    def save(self):
+        """
+        Save the trained model to disk.
+
+        The filename encodes the network depth using the CIFAR ResNet formula: 6n + 2,
+        where n is `residual_block_depth` (e.g. n=5 → ResNet-32, n=9 → ResNet-56).
+        """
+
+        models_dir = Path("models")
+        models_dir.mkdir(exist_ok=True)
+
+        depth = 6 * self.config.residual_block_depth + 2
+        stem = f"resnet-{depth}_{self.config.variant.value}"
+
+        # Save model weights.
+        weights_path = models_dir / f"{stem}.pth"
+        torch.save(self.model.state_dict(), weights_path)
+        print(f"Model weights saved to {weights_path}")
+
+        # Save ModelConfig so the architecture can be reconstructed on load.
+        model_config = {
+            "initial_out_planes": 16,
+            "kernel_size": 3,
+            "num_classes": 10 if self.config.variant == enums.CIFAR.CIFAR10 else 100,
+            "padding": 1,
+            "residual_block_depth": self.config.residual_block_depth,
+            "stride": 2,
+        }
+        config_path = models_dir / f"{stem}.json"
+        config_path.write_text(json.dumps(model_config, indent=2), encoding="utf-8")
+        print(f"Model config saved to {config_path}")
