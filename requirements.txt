@@ -1,0 +1,4 @@
+torch
+torchinfo
+torchvision
+tqdm

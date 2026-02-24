@@ -1,0 +1,4 @@
+{
+  "black-formatter.args": ["--line-length", "119"],
+  "pylint.args": ["--max-line-length=119"]
+}
