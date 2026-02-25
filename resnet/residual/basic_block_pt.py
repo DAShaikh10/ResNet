@@ -1,5 +1,10 @@
 """
 @Author: DAShaikh10
+@Description: Basic residual block implementation for Residual Network (ResNet) in PyTorch,
+              using Option A (identity shortcut with zero-padding for dimension mismatch)
+              as described in the original research paper.
+              This block is more suitable for CIFAR datasets, as it is computationally efficient and
+              does not introduce additional parameters.
 """
 
 # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-instance-attributes
@@ -50,14 +55,14 @@ class BasicBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(self.conv2.out_channels)
 
         # Option A: Identity shortcut with zero-padding for dimension mismatch.
-        # Using Option A as per the paper for CIFAR: zero-padding for increasing dimensions
+        # Using Option A as per the paper for CIFAR: zero-padding for increasing dimensions.
         self.stride = stride
         self.in_planes = in_planes
         self.out_planes = out_planes
 
-        # Create shortcut module
+        # Create shortcut module.
         if stride != 1 or in_planes != out_planes:
-            # Need to adjust the shortcut to match dimensions
+            # Need to adjust the shortcut to match dimensions.
             self.shortcut = nn.Sequential()
         else:
             self.shortcut = nn.Identity()
@@ -81,7 +86,7 @@ class BasicBlock(nn.Module):
         # Apply downsampling if stride != 1
         identity = x
         if self.stride != 1 or self.in_planes != self.out_planes:
-            # Downsample spatial dimensions if needed
+            # Downsample spatial dimensions if needed.
             if self.stride != 1:
                 identity = identity[:, :, :: self.stride, :: self.stride]
             # Pad channels if needed (Option A: zero-padding)

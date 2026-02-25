@@ -1,8 +1,9 @@
 """
 @Author: DAShaikh10
+@Description: Script to train a Residual Network (ResNet) on CIFAR-10 or CIFAR-100 dataset.
 """
 
-# pylint: disable=line-too-long, invalid-name
+# pylint: disable=line-too-long
 
 import argparse
 
@@ -115,7 +116,7 @@ warmup_threshold: float = args.warmup_threshold
 assert 0 < train_val_split <= 1, f"Invalid train-validation split ratio: {train_val_split}"
 assert 0 < warmup_threshold < 1, f"Invalid warmup threshold: {warmup_threshold}"
 
-# Construct the ResNet configuration.
+# Construct the `ResNet` configuration.
 resnet_config = ResNetConfig(
     activation=activation,
     batch_size=batch_size,
@@ -132,17 +133,18 @@ resnet_config = ResNetConfig(
     warmup_threshold=warmup_threshold,
 )
 
-# Instantiate the ResNet model with the specified configuration.
+# Instantiate the `ResNet` model with the specified configuration.
 resnet: TorchResNetEngine = None
 if resnet_config.framework == enums.Framework.PYTORCH:
     resnet = TorchResNetEngine(resnet_config)
 
-# Initialize the dataloader for training (and validation) data. The test dataloader will be initialized after training is complete.
+# Initialize the dataloader for training (and validation) data.
+# The test dataloader will be initialized after training is complete.
 print(f"Initializing dataloaders for {resnet_config.variant.value} dataset.")
 resnet.init_dataloader(load_test=False)
 print("Dataloaders initialized successfully.")
 
-# Start the training process.
+# Perform model training.
 resnet.fit()
 
 # Save the trained model to disk.

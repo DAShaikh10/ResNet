@@ -1,5 +1,7 @@
 """
 @Author: DAShaikh10
+@Description: PyTorch engine for training and evaluating Residual Networks (ResNets)
+              on CIFAR-10 and CIFAR-100 datasets.
 """
 
 # pylint: disable=too-many-instance-attributes, too-many-locals
@@ -409,13 +411,14 @@ class TorchResNetEngine:
         """
         Save the trained model to disk.
 
-        The filename encodes the network depth using the CIFAR ResNet formula: 6n + 2,
-        where n is `residual_block_depth` (e.g. n=5 → ResNet-32, n=9 → ResNet-56).
+        The filename encodes the network depth using the **CIFAR ResNet** formula: `6n + 2`,
+        where n is `residual_block_depth` _(e.g. n=5 → ResNet-32, n=9 → ResNet-56)_.
         """
 
         models_dir = Path("models")
         models_dir.mkdir(exist_ok=True)
 
+        # Formula as given in research paper.
         depth = 6 * self.config.residual_block_depth + 2
         stem = f"resnet-{depth}_{self.config.variant.value}"
 
@@ -426,12 +429,12 @@ class TorchResNetEngine:
 
         # Save ModelConfig so the architecture can be reconstructed on load.
         model_config = {
-            "initial_out_planes": 16,
-            "kernel_size": 3,
-            "num_classes": 10 if self.config.variant == enums.CIFAR.CIFAR10 else 100,
-            "padding": 1,
+            "initial_out_planes": self.model.config.initial_out_planes,
+            "kernel_size": self.model.config.kernel_size,
+            "num_classes": self.model.config.num_classes,
+            "padding": self.model.config.padding,
             "residual_block_depth": self.config.residual_block_depth,
-            "stride": 2,
+            "stride": self.model.config.stride,
         }
         config_path = models_dir / f"{stem}.json"
         config_path.write_text(json.dumps(model_config, indent=2), encoding="utf-8")

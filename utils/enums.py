@@ -1,5 +1,7 @@
 """
 @Author: DAShaikh10
+@Description: Enums for various configuration options like activation functions, optimizers, devices, etc.
+              Provides case-insensitive lookup and is used across the codebase for consistent configuration management.
 """
 
 from enum import Enum

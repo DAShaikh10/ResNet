@@ -1,5 +1,6 @@
 """
 @Author: DAShaikh10
+@Description: `resnet.cifar.models` package containing all code related to Residual Network (ResNet) model config.
 """
 
 from dataclasses import dataclass

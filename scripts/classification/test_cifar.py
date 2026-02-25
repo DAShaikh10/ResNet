@@ -1,8 +1,9 @@
 """
 @Author: DAShaikh10
+@Description: Script to test / evaluate a trained Residual Network (ResNet) on CIFAR-10 or CIFAR-100 dataset.
 """
 
-# pylint: disable=line-too-long, invalid-name
+# pylint: disable=line-too-long
 
 import argparse
 
@@ -57,8 +58,8 @@ seed: int = args.seed
 model_path: str = args.model_path
 variant: enums.CIFAR = args.variant
 
-# Construct the ResNet configuration. residual_block_depth and variant are
-# populated automatically by load() from the saved model's JSON config.
+# Construct the ResNet configuration. `residual_block_depth` and `variant` are
+# populated automatically by `load()` from the saved model's JSON config.
 resnet_config = ResNetConfig(
     batch_size=batch_size,
     device=device,
@@ -80,6 +81,7 @@ print(f"Initializing test dataloader for {resnet_config.variant.value} dataset."
 resnet.init_dataloader(load_test=True)
 
 # Evaluate on the test set.
+# We present the same accuracy and error rate metrics as the original research paper for comparison.
 test_acc = resnet.evaluate(resnet.test_dataloader)
 print(
     f"\nTest accuracy: {test_acc:.4f} ({test_acc * 100:.2f}%), Error rate: {1 - test_acc:.4f} ({(1 - test_acc) * 100:.2f}%)"

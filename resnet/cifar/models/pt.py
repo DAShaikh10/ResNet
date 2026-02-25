@@ -1,5 +1,7 @@
 """
 @Author: DAShaikh10
+@Description: `resnet.cifar.models` package containing all code related to Residual Network (ResNet) models
+              for CIFAR-10 and CIFAR-100 datasets.
 """
 
 # pylint: disable=too-many-instance-attributes, too-many-positional-arguments, too-many-arguments
@@ -30,7 +32,7 @@ class TorchResNet(nn.Module):
             kernel_size=self.config.kernel_size,
             stride=1,  # The first layer does not downsample the input, so stride is set to 1.
             padding=self.config.padding,
-            bias=False,  # Add REASON
+            bias=False,  # Bias gets cancelled in batch normalization and hence we avoid bias in this layer.
         )
         self.bn1 = nn.BatchNorm2d(self.conv1.out_channels)
 

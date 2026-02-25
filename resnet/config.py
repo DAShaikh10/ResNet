@@ -1,5 +1,6 @@
 """
 @Author: DAShaikh10
+@Description: Configuration data-class for Residual Network (ResNet).
 """
 
 # pylint: disable=too-many-instance-attributes
