@@ -106,6 +106,7 @@ class TorchResNetEngine:
         """
         Compute the global mean and standard deviation of the dataset for normalization.
         """
+
         sum_ = torch.zeros(3)
         sum_sq = torch.zeros(3)
         total_pixels = 0
@@ -307,6 +308,9 @@ class TorchResNetEngine:
         if self.model is None:
             self._init_model()
 
+        self.model.initialize_weights()
+        self.model.train()
+
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.SGD(
             self.model.parameters(),
@@ -329,9 +333,6 @@ class TorchResNetEngine:
             enable_warmup=enable_warmup,
         )
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda_func)
-
-        self.model.initialize_weights()
-        self.model.train()
 
         print(f"Starting training on {self.device}...")
         num_epochs = self.config.iterations // len(self.train_dataloader) + 1
