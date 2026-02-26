@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader, random_split, SubsetRandomSampler
 from torchvision import datasets, transforms
 
 from utils import enums
-from resnet.config import ResNetConfig
+from resnet import ResNetConfig
 from resnet.cifar.models import ModelConfig, TorchResNet
 
 
@@ -30,7 +30,7 @@ class TorchResNetEngine:
     """
 
     def __init__(self, config: ResNetConfig):
-        self._generator = torch.random.manual_seed(config.seed)
+        self._generator = torch.random.manual_seed(config.seed)  # Sets the global random seed.
         self._train_indices = None
         self._val_indices = None
 
@@ -104,21 +104,26 @@ class TorchResNetEngine:
 
     def _compute_statistics(self, dataloader: DataLoader):
         """
-        Compute the mean and standard deviation of the dataset for normalization.
+        Compute the global mean and standard deviation of the dataset for normalization.
         """
+        sum_ = torch.zeros(3)
+        sum_sq = torch.zeros(3)
+        total_pixels = 0
 
-        mean = 0.0
-        std = 0.0
-        total_samples = 0
         for images, _ in dataloader:
-            batch_samples = images.size(0)
-            images = images.view(batch_samples, images.size(1), -1)
-            mean += images.mean(2).sum(0)
-            std += images.std(2).sum(0)
-            total_samples += batch_samples
+            # images shape: [Batch, Channels, Height, Width].
+            b, _, h, w = images.shape
+            pixels_in_batch = b * h * w
 
-        mean /= total_samples
-        std /= total_samples
+            # Sum of pixels and sum of squared pixels per channel.
+            sum_ += torch.sum(images, dim=[0, 2, 3])
+            sum_sq += torch.sum(images**2, dim=[0, 2, 3])
+            total_pixels += pixels_in_batch
+
+        mean = sum_ / total_pixels
+        # Variance formula: E[X^2] - (E[X])^2
+        var = (sum_sq / total_pixels) - (mean**2)
+        std = torch.sqrt(var)
 
         return mean, std
 
