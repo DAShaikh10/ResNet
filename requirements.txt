@@ -1,4 +1,5 @@
 torch
+# torch-xla # Install for TPU support.
 torchinfo
 torchvision
 tqdm
