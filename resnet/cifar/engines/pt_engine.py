@@ -13,10 +13,23 @@ from functools import partial
 import torch
 import torchinfo
 
+try:
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+    import torch_xla.distributed.xla_multiprocessing as xmp
+
+    XLA_AVAILABLE = True
+    # XLA_AVAILABLE only means torch_xla imported; TPU_AVAILABLE confirms real TPU hardware is present.
+    TPU_AVAILABLE = xm.xla_device_hw(torch_xla.device()) == "TPU"
+except ImportError:
+    XLA_AVAILABLE = False
+    TPU_AVAILABLE = False
+
 from tqdm import tqdm
-from torch import nn
-from torch import optim
-from torch.utils.data import DataLoader, random_split, SubsetRandomSampler
+from torch import nn, optim, distributed
+from torch.utils.data import DataLoader, random_split, Subset, SubsetRandomSampler
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
 
 from utils import enums
@@ -53,6 +66,14 @@ class TorchResNetEngine:
         self.val_std = 0.0
         self.val_transforms: transforms.Compose = None
 
+    @property
+    def _is_tpu(self) -> bool:
+        """
+        Returns True if the current device is a real XLA/TPU device.
+        """
+
+        return TPU_AVAILABLE and str(self.device).startswith("xla")
+
     @staticmethod
     def lr_lambda(current_step: int, learning_rate: list[float], milestones: list[int], enable_warmup: bool):
         """
@@ -73,14 +94,61 @@ class TorchResNetEngine:
         # Second decay: 0.01x
         return 0.01
 
+    @staticmethod
+    def spawn(config: ResNetConfig, nprocs: int = 8) -> None:
+        """
+        Launch multi-core TPU training using **xmp.spawn**.
+
+        Each TPU core runs an independent process. `DistributedSampler` inside
+        `init_dataloader` ensures every core sees a disjoint shard of the data.
+        Only the rank-0 process saves the model after training.
+
+        Args:
+            config: ResNetConfig - Training configuration.
+            nprocs: int - Number of TPU cores to use. _(Default: 8 for a v3/v4 TPU)_
+        """
+
+        if not TPU_AVAILABLE:
+            raise RuntimeError("spawn() requires torch_xla to be installed and real TPU hardware to be present.")
+
+        def _train_fn(_: int, config: ResNetConfig) -> None:
+            engine = TorchResNetEngine(config)
+            engine.init_dataloader()
+            engine.fit()
+            # Only rank-0 saves to avoid multiple processes writing the same file.
+            if engine._xla_ordinal() == 0:
+                engine.save()
+
+        xmp.spawn(_train_fn, args=(config,), nprocs=nprocs)
+
+    def _xla_world_size(self) -> int:
+        """
+        Returns the number of XLA devices (TPU cores) in the current process group.
+        the standard torch.distributed world size is the correct replacement.
+        """
+
+        return distributed.get_world_size() if distributed.is_initialized() else 1
+
+
+    def _xla_ordinal(self) -> int:
+        """
+        Returns the ordinal (rank) of the current XLA device.
+        """
+
+        return distributed.get_rank() if distributed.is_initialized() else 0
+
     def _setup_device(self):
         """
-        Setup the device for training. Auto-detects GPU if available, otherwise uses CPU.
+        Setup the device for training. Auto-detects TPU > GPU > CPU when no device is specified.
         """
 
         if self.config.device is None:
-            # Auto-detect device
-            if torch.cuda.is_available():
+            # Auto-detect device: only route to TPU if real hardware is confirmed.
+            if TPU_AVAILABLE:
+                self.device = torch_xla.device()
+                print(f"TPU detected: {self.device}")
+                print("Using TPU for training.")
+            elif torch.cuda.is_available():
                 self.device = torch.device("cuda")
                 print(f"GPU detected: {torch.cuda.get_device_name(0)}")
                 print("Using GPU for training.")
@@ -88,19 +156,32 @@ class TorchResNetEngine:
                 self.device = torch.device("cpu")
                 print("No GPU detected. Using CPU for training.")
         else:
-            # Convert enum to torch device.
-            device_str = self.config.device.value.lower()
-            if device_str == "gpu":
+            if self.config.device == enums.Device.TPU:
+                if TPU_AVAILABLE:
+                    self.device = torch_xla.device()
+                    print(f"TPU detected: {self.device}")
+                    print("Using TPU for training.")
+                    return
+
+                # torch_xla is either not installed or no real TPU hardware found — fall through to GPU.
+                reason = "`torch_xla` is not installed" if not XLA_AVAILABLE else "no TPU hardware found"
+                print(f"Warning: TPU requested but {reason}. Falling back to GPU/CPU.")
                 if torch.cuda.is_available():
                     self.device = torch.device("cuda")
                     print(f"GPU detected: {torch.cuda.get_device_name(0)}")
                     print("Using GPU for training.")
-                else:
-                    print("Warning: GPU requested but not available. Falling back to CPU.")
-                    self.device = torch.device("cpu")
-            else:
-                self.device = torch.device("cpu")
-                print("Using CPU for training.")
+                    return
+            if self.config.device == enums.Device.GPU:
+                if torch.cuda.is_available():
+                    self.device = torch.device("cuda")
+                    print(f"GPU detected: {torch.cuda.get_device_name(0)}")
+                    print("Using GPU for training.")
+                    return
+
+                print("Warning: GPU requested but not available. Falling back to CPU.")
+
+            self.device = torch.device("cpu")
+            print("Using CPU for training.")
 
     def _compute_statistics(self, dataloader: DataLoader):
         """
@@ -145,7 +226,10 @@ class TorchResNetEngine:
         self.model = TorchResNet(model_config).to(self.device)
         print(f"Model initialized and moved to {self.device}.")
 
-        torchinfo.summary(self.model, input_size=(self.config.batch_size, 3, 32, 32), device=str(self.device))
+        # torchinfo creates dummy CPU inputs internally and runs a forward pass through the model.
+        # This will cause a device mismatch if the model is on XLA (TPU), so skip it in that case.
+        if not self._is_tpu:
+            torchinfo.summary(self.model, input_size=(self.config.batch_size, 3, 32, 32), device=self.device)
         print("\n")
 
     def _init_transforms(self, load_test: bool = False):
@@ -284,6 +368,44 @@ class TorchResNetEngine:
         # Apply transforms and initialize dataloaders for training and validation datasets.
         train_dataset = dataset_reader(root="./data", train=True, download=False, transform=self.train_transforms)
         val_dataset = dataset_reader(root="./data", train=True, download=False, transform=self.val_transforms)
+
+        # Under xmp.spawn (multi-core TPU), the world size > 1.
+        # Each core must see a disjoint shard: use DistributedSampler over a Subset.
+        # Single-core TPU and CPU/GPU paths keep the original SubsetRandomSampler.
+        if self._is_tpu and self._xla_world_size() > 1:
+            train_subset = Subset(train_dataset, self._train_indices.indices)
+            val_subset = Subset(val_dataset, self._val_indices.indices)
+            train_sampler = DistributedSampler(
+                train_subset,
+                num_replicas=self._xla_world_size(),
+                rank=self._xla_ordinal(),
+                shuffle=True,
+            )
+            val_sampler = DistributedSampler(
+                val_subset,
+                num_replicas=self._xla_world_size(),
+                rank=self._xla_ordinal(),
+                shuffle=False,
+            )
+            self.train_dataloader = DataLoader(
+                train_subset,
+                batch_size=self.config.batch_size,
+                shuffle=False,  # DistributedSampler handles shuffling.
+                sampler=train_sampler,
+            )
+            self.val_dataloader = DataLoader(
+                val_subset,
+                batch_size=self.config.batch_size,
+                shuffle=False,
+                sampler=val_sampler,
+            )
+            self.train_dataloader = pl.MpDeviceLoader(self.train_dataloader, self.device)
+            self.val_dataloader = pl.MpDeviceLoader(self.val_dataloader, self.device)
+
+            print("Training (validation) dataloaders initialized successfully.")
+
+            return
+
         self.train_dataloader = DataLoader(
             train_dataset,
             batch_size=self.config.batch_size,
@@ -351,7 +473,11 @@ class TorchResNetEngine:
                 outputs = self.model(inputs)
                 loss: torch.Tensor = criterion(outputs, targets)
                 loss.backward()
-                optimizer.step()
+                if self._is_tpu:
+                    xm.optimizer_step(optimizer)  # Syncs gradients across TPU cores, then steps.
+                    torch_xla.sync()  # Flush the lazy XLA graph so subsequent .item() calls don't stall.
+                else:
+                    optimizer.step()
 
                 # Track metrics
                 running_loss += loss.item()
