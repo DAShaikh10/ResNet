@@ -106,13 +106,6 @@ class TorchResNet(nn.Module):
                 nn.init.normal_(module.weight, 0, 0.01)
                 nn.init.constant_(module.bias, 0)
 
-        # A 2017 paper suggests better performance
-        # by initializing the last batch normalization layer in each residual block to zero.
-        # https://arxiv.org/abs/1706.02677
-        for m in self.modules():
-            if isinstance(m, BasicBlock):
-                nn.init.constant_(m.bn2.weight, 0)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the ResNet model for CIFAR-10 or CIFAR-100.
