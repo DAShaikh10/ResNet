@@ -15,6 +15,7 @@ import torchinfo
 
 try:
     import torch_xla
+    import torch_xla.runtime as xr
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
     import torch_xla.distributed.xla_multiprocessing as xmp
@@ -27,7 +28,7 @@ except ImportError:
     TPU_AVAILABLE = False
 
 from tqdm import tqdm
-from torch import nn, optim, distributed
+from torch import nn, optim
 from torch.utils.data import DataLoader, random_split, Subset, SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
@@ -111,12 +112,12 @@ class TorchResNetEngine:
         if not TPU_AVAILABLE:
             raise RuntimeError("spawn() requires torch_xla to be installed and real TPU hardware to be present.")
 
-        def _train_fn(_: int, config: ResNetConfig) -> None:
+        def _train_fn(index: int, config: ResNetConfig) -> None:
             engine = TorchResNetEngine(config)
             engine.init_dataloader()
             engine.fit()
             # Only rank-0 saves to avoid multiple processes writing the same file.
-            if engine._xla_ordinal() == 0:
+            if engine.xla_ordinal() == 0:
                 engine.save()
 
         xmp.spawn(_train_fn, args=(config,), nprocs=nprocs)
@@ -124,18 +125,9 @@ class TorchResNetEngine:
     def _xla_world_size(self) -> int:
         """
         Returns the number of XLA devices (TPU cores) in the current process group.
-        the standard torch.distributed world size is the correct replacement.
         """
 
-        return distributed.get_world_size() if distributed.is_initialized() else 1
-
-
-    def _xla_ordinal(self) -> int:
-        """
-        Returns the ordinal (rank) of the current XLA device.
-        """
-
-        return distributed.get_rank() if distributed.is_initialized() else 0
+        return xr.world_size() if self._is_tpu else 1
 
     def _setup_device(self):
         """
@@ -378,13 +370,13 @@ class TorchResNetEngine:
             train_sampler = DistributedSampler(
                 train_subset,
                 num_replicas=self._xla_world_size(),
-                rank=self._xla_ordinal(),
+                rank=self.xla_ordinal(),
                 shuffle=True,
             )
             val_sampler = DistributedSampler(
                 val_subset,
                 num_replicas=self._xla_world_size(),
-                rank=self._xla_ordinal(),
+                rank=self.xla_ordinal(),
                 shuffle=False,
             )
             self.train_dataloader = DataLoader(
@@ -399,25 +391,25 @@ class TorchResNetEngine:
                 shuffle=False,
                 sampler=val_sampler,
             )
+        else:
+            self.train_dataloader = DataLoader(
+                train_dataset,
+                batch_size=self.config.batch_size,
+                shuffle=False,
+                sampler=SubsetRandomSampler(self._train_indices.indices),
+            )
+            self.val_dataloader = DataLoader(
+                val_dataset,
+                batch_size=self.config.batch_size,
+                shuffle=False,
+                sampler=SubsetRandomSampler(self._val_indices.indices),
+            )
+
+        # MpDeviceLoader pre-loads data to the XLA device, improving performance
+        # for both single-core and multi-core TPU training.
+        if self._is_tpu:
             self.train_dataloader = pl.MpDeviceLoader(self.train_dataloader, self.device)
             self.val_dataloader = pl.MpDeviceLoader(self.val_dataloader, self.device)
-
-            print("Training (validation) dataloaders initialized successfully.")
-
-            return
-
-        self.train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=self.config.batch_size,
-            shuffle=False,
-            sampler=SubsetRandomSampler(self._train_indices.indices),
-        )
-        self.val_dataloader = DataLoader(
-            val_dataset,
-            batch_size=self.config.batch_size,
-            shuffle=False,
-            sampler=SubsetRandomSampler(self._val_indices.indices),
-        )
 
         print("Training (validation) dataloaders initialized successfully.")
 
@@ -571,3 +563,10 @@ class TorchResNetEngine:
         config_path = models_dir / f"{stem}.json"
         config_path.write_text(json.dumps(model_config, indent=2), encoding="utf-8")
         print(f"Model config saved to {config_path}")
+
+    def xla_ordinal(self) -> int:
+        """
+        Returns the ordinal (rank) of the current XLA device.
+        """
+
+        return xr.get_ordinal() if self._is_tpu else 0
