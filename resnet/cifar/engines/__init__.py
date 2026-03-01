@@ -4,6 +4,8 @@
               Residual Networks (ResNets) on CIFAR-10 and CIFAR-100 datasets.
 """
 
-from .pt_engine import TorchResNetEngine
+from .pytorch.engine import ResNetEngine
+from .pytorch.gpu_engine import TorchResNetEngine
+from .pytorch.tpu_engine import TorchResNetTPUEngine
 
-__all__ = ["TorchResNetEngine"]
+__all__ = ["ResNetEngine", "TorchResNetEngine", "TorchResNetTPUEngine"]

@@ -5,7 +5,7 @@
 """
 
 from .config import ModelConfig
-from .pt import TorchResNet
+from .pytorch import TorchResNet
 
 
 __all__ = ["ModelConfig", "TorchResNet"]

@@ -28,7 +28,9 @@ class ResNetConfig:
     activation: enums.ActivationFunction = enums.ActivationFunction.RELU
     iterations: int = 0
     learning_rate: list[float] = None
+    momentum: float = 0.9
     optimizer: enums.Optimizer = enums.Optimizer.SGD
     train_val_split: float = 0.8
+    weight_decay: float = 1e-4
     weight_initialization: enums.WeightInitialization = enums.WeightInitialization.HE
     warmup_threshold: float = 0.0

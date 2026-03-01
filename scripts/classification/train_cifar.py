@@ -9,7 +9,8 @@ import argparse
 
 from utils import enums
 from resnet import ResNetConfig
-from resnet.cifar.engines import TorchResNetEngine
+
+from resnet.cifar.engines import ResNetEngine, TorchResNetEngine, TorchResNetTPUEngine
 
 
 # Read command-line arguments.
@@ -59,7 +60,7 @@ parser.add_argument(
     help="Optimizer to use for training (Default: SGD)",
     choices=[enum.value for enum in enums.Optimizer],
 )
-# TODO: Maybe provide regularization configuration as well.
+parser.add_argument("--momentum", "-m", type=float, default=0.9, help="Momentum for optimizer (Default: 0.9)")
 parser.add_argument(
     "--residual_block_depth",
     "-rd",
@@ -79,6 +80,9 @@ parser.add_argument(
     default=enums.CIFAR.CIFAR10,
     help="CIFAR dataset variant to use (Default: CIFAR-10)",
     choices=[enum.value for enum in enums.CIFAR],
+)
+parser.add_argument(
+    "--weight_decay", "-wd", type=float, default=1e-4, help="Weight decay for optimizer (Default: 1e-4)"
 )
 parser.add_argument(
     "--weight_initialization",
@@ -104,11 +108,13 @@ device: None | enums.Device = args.device
 framework: enums.Framework = args.framework
 iterations: int = args.iterations
 learning_rate: list[float] = args.learning_rate
+momentum: float = args.momentum
 optimizer: enums.Optimizer = args.optimizer
 residual_block_depth: int = args.residual_block_depth
 seed: int = args.seed
 train_val_split: float = args.train_val_split
 variant: enums.CIFAR = args.variant
+weight_decay: float = args.weight_decay
 weight_initialization: enums.WeightInitialization = args.weight_initialization
 warmup_threshold: float = args.warmup_threshold
 
@@ -124,19 +130,21 @@ resnet_config = ResNetConfig(
     framework=framework,
     iterations=iterations,
     learning_rate=learning_rate,
+    momentum=momentum,
     optimizer=optimizer,
     residual_block_depth=residual_block_depth,
     seed=seed,
     train_val_split=train_val_split,
     variant=variant,
+    weight_decay=weight_decay,
     weight_initialization=weight_initialization,
     warmup_threshold=warmup_threshold,
 )
 
 # Instantiate the `ResNet` model with the specified configuration.
-resnet: TorchResNetEngine = None
+resnet: TorchResNetEngine | TorchResNetTPUEngine = None
 if resnet_config.framework == enums.Framework.PYTORCH:
-    resnet = TorchResNetEngine(resnet_config)
+    resnet = ResNetEngine.create(resnet_config)
 
 # Initialize the dataloader for training (and validation) data.
 # The test dataloader will be initialized after training is complete.
